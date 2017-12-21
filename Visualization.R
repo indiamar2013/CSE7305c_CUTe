@@ -1,26 +1,10 @@
----
-  title: "Team17_CSE7302c_CUTe"
-author: "Amar Rao"
-date: "December 16, 2017"
-output: 
-  html_document:
-  toc: true
-toc_float:
-  collapsed: false
-theme: united
-highlight: tang
-fig_width: 7
-fig_height: 6
-fig_caption: true
-code_folding: hide
 
----
   
 #clear all environment and session variables
 rm(list = ls(all = TRUE))
 
 
-Libraries
+#Libraries
 
 library(tidyverse)
 library(lubridate)
@@ -35,69 +19,117 @@ library(zoo)
 
 ## Reading data
 
-setwd('C:/Users/212629693/Documents/Personal/ds-classes/INSOFE_Batch35_7302c_CUTe_Team17')
+getRawData <- function(path="", data_file="train.csv", target="", sep = ',', header = TRUE) {
+  if(!file.exists(data_file)) {
+    return(NULL)    
+  }
+  setwd(path)
+  raw_data <- read.csv(file = data_file, header = header, sep = sep, colClasses = 'numeric')
+  
+  if (!(target == "")) {
+    raw_data[,colnames(raw_data) %in% target] <- as.factor(as.character(raw_data[, colnames(raw_data) %in% target]))
+  }
+  return(raw_data)
+}
 
-fin_data_orig <- read.csv('Datasets/train_data.csv', header = TRUE, sep = ',', na.strings = "", colClasses = "double", numerals = "no.loss")
+getPreProcessedData <- function(path=getwd(), 
+                                data_file="train.csv", 
+                                target="", 
+                                sep = ',', 
+                                header = TRUE, 
+                                imputed_file = 'imputed_data.csv',
+                                na_threshold = 0.3,
+                                zero_threshold = 0.5) {
+  setwd(path)
+  if (file.exists(imputed_file)) {
+    data <- read.csv(imputed_file)
+    if (!class(data[, colnames(data) %in% target]) == 'factor') {
+      data[,colnames(data) %in% target] <- as.factor(as.character(data[,colnames(data) %in% target]))
+    }
+    return(data)
+  }
+  raw_data = getRawData(path, data_file, target, sep, header)
+  
+  #remove empty columns
+  emptycols <- colnames(raw_data[,sapply(raw_data, function(x) { all(is.na(x))})])
+  preproc_data <- raw_data[, !colnames(raw_data) %in% emptycols]
+  rm(emptycols, raw_data)
+  #remove columns with na beyond threshold
+  colswithna <- sort(colSums(is.na(preproc_data)), decreasing = TRUE)
+  nacolstoremove <- colswithna[colswithna > nrow(preproc_data)*na_threshold]
+  preproc_data <- preproc_data[, !colnames(preproc_data) %in% names(nacolstoremove)]
+  rm(colswithna, nacolstoremove)
+  
+  
+  sparsecols <- sort(colSums(preproc_data[,!colnames(preproc_data) %in% c("target")] == 0), decreasing = TRUE)
+  colstoremove <- sparsecols[sparsecols > round(nrow(preproc_data) * zero_threshold)]
+  preproc_data <- preproc_data[, !colnames(preproc_data) %in% names(colstoremove)]
+  rm(colstoremove, sparsecols)
+  
+  
+  rownames(fin_data) <- fin_data$ID
+  fin_data$ID <- NULL
+  
+  constant_cols <- colnames(fin_data[ , sapply(preproc_data, function(v){ var(v, na.rm=TRUE)==0})])
+  preproc_data <- fin_data[, !colnames(preproc_data) %in% constant_cols]
+  rm(constant_cols)
+  
+  #IMPUTATION
+  # we have to do this before splitting because otherwise, all missing rows in test_data get imputed
+  
+  library(RANN)
+  
+  set.seed(1234)
+  
+  preproc_preds <- preProcess(x = subset(preproc_data, select = -c(target)), method = c("knnImpute"))
+  preproc_data <- predict(preproc_preds, preproc_data)
+  rm(preproc_preds)
+  
+  #the imputation takes a lot of time, so I will write it to csv in case i need
+  #to resume later.
+  write.csv(x = v, file = 'imputed_data.csv')
+  return(preproc_data)
+}
 
-
-cat_attrs <- c('y2')
-num_attrs <- setdiff(colnames(fin_data_orig), cat_attrs)
-
-fin_data_orig[cat_attrs] <- data.frame(sapply(fin_data_orig[cat_attrs], as.factor))
-emptycols <- colnames(fin_data_orig[,sapply(fin_data_orig, function(x) { all(is.na(x))})])
-fin_data <- fin_data_orig[, !colnames(fin_data_orig) %in% emptycols]
-
-
-colswithna <- sort(colSums(is.na(fin_data)), decreasing = TRUE)
-
-nacolstoremove <- colswithna[colswithna > nrow(fin_data)*0.03]
-nacolstoremove
-
-fin_data <- fin_data[, !colnames(fin_data) %in% names(nacolstoremove)]
-
-sparsecols <- sort(colSums(fin_data[,!colnames(fin_data) %in% c("y1", "y2")] == 0), decreasing = TRUE)
-colstoremove <- sparsecols[sparsecols > round(nrow(fin_data) * 0.25)]
-colstoremove
-
-fin_data <- fin_data[, !colnames(fin_data) %in% names(colstoremove)]
-
-
-rownames(fin_data) <- fin_data$timestamp
-fin_data$timestamp <- NULL
-
-constant_cols <- colnames(fin_data[ , sapply(fin_data, function(v){ var(v, na.rm=TRUE)==0})])
-constant_cols
-fin_data <- fin_data[, !colnames(fin_data) %in% constant_cols]
-
-library(RANN)
-
-set.seed(1234)
-
-preproc_preds <- preProcess(x = subset(fin_data, select = -c(y1, y2)), method = c("knnImpute"))
-fin_data <- predict(preproc_preds, fin_data)
-
-sum(is.na(fin_data))
-
-head(fin_data)
-
-##Visualizing the dataset
-# We need to understand the relationship between y1 and the dependent variables
-# There are a lot of columns:
-# d_0 - d_4
-# f_0 - f_60
-# t_0 - t_43
-
-
-library(reshape2)
-genplot <- function(data=data.frame()) {
-  df <- melt(data, id.vars = 'y1', variable.name = 'series')
+genplot <- function(data=data.frame(), y='y') {
+  require(reshape2)
+  require(gridExtra)
+  df <- melt(data, id.vars = y, variable.name = 'series')
   df
-  plt <- ggplot(df, aes(y1,value)) + geom_point(aes(colour=series)) + facet_grid(series ~ .)
+  plt <- ggplot(df, aes(y,value)) + geom_point(aes(colour=series)) + facet_grid(series ~ .)
+  return(plt)
+}
+
+genboxplot <- function(data=data.frame) {
+  require(reshape2)
+  require(gridExtra)
+  numericcols <- data[,sapply(data, class) == 'numeric']
+  plt <- ggplot(stack(data), aes(x = ind, y = values)) +
+    geom_boxplot(aes(color=values))
   return(plt)
 }
 
 
-plt_df <- fin_data[,!colnames(fin_data) %in% c("y1", "y2")]
+setwd('~/datasets/CSE7305c_CUTe')
+fin_data <- getPreProcessedData(path = getwd(), data_file = 'train.csv', target = 'target', sep = ',', header = TRUE, imputed_file = 'imputed_data.csv', na_threshold = 0.3, zero_threshold = 0.5)
+
+
+#split into train and test
+#will use caret package
+train_rows <- createDataPartition(fin_data$target, p = 0.7, list = FALSE)
+train_data <- fin_data[train_rows,]
+test_data <- fin_data[-train_rows,]
+prop.table(table(fin_data$target))
+prop.table(table(train_data$target))
+prop.table(table(test_data$target))
+#remove original data to conserve memory
+rm(fin_data)
+rm(train_rows)
+
+##Visualizing the dataset
+
+
+plt_df <- train_data[,!colnames(train_data) %in% c("target")]
 numplts <- 5
 numvars <- ncol(plt_df)
 numiters <- round(numvars/numplts)
@@ -107,19 +139,30 @@ if (numvars > numiters*numplts) {
 numiters
 ncol(plt_df)
 
+# for (i in 1:numiters) {
+#   startcol <- (((i-1)*numplts)+1)
+#   ifelse (i == numiters, endcol <- ncol(plt_df), endcol <- i*numplts)
+#   pltdf <- plt_df[, startcol: endcol]
+#   pltdf$target <- train_data$target
+#   print(genplot(data = pltdf, y='target'))
+# }
+
+
 for (i in 1:numiters) {
   startcol <- (((i-1)*numplts)+1)
   ifelse (i == numiters, endcol <- ncol(plt_df), endcol <- i*numplts)
   pltdf <- plt_df[, startcol: endcol]
-  pltdf$y1 <- fin_data$y1
-  print(genplot(data = pltdf))
+  print(genboxplot(pltdf))
 }
+rm(pltdf, numiters, i, numplts, numvars, startcol, plt_df)
+rm(endcol)
+summary(train_data)
 
 
-install.packages("ggcorrplot")
-library(ggcorrplot)
 
-cors <- cor(fin_data[,!colnames(fin_data) %in% c("y1", "y2")])
-cors
-ggcorrplot(cors, hc.order = TRUE, type = "upper", insig = "blank")
-```
+require(ggcorrplot)
+
+cors <- cor(train_data[,!colnames(train_data) %in% c("target")])
+
+ggcorrplot(cors, hc.order=TRUE, type = "upper", insig = "blank")
+
