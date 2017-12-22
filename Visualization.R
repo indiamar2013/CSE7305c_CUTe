@@ -238,9 +238,10 @@ summary(svm_mdl1)
 
 #NOTE: This completed with a warning that max iterations were reached.
 #Trying with PCA to reduce #dimensions
+set.seed(123)
 train_pca <- prcomp(x = train_std[,!colnames(train_std) %in% 'target'])
 summary(train_pca)
-#This shows that first 25 components can account for approximately 98% of variance in the dataset.
+#This shows that first 25 components can account for approximately 98.5% of variance in the dataset.
 # So building an SVM Model with this dataset
 
 train_pca_data <- data.frame(train_pca$x[,1:25], target=train_std$target)
@@ -253,6 +254,7 @@ summary(svm_mdl2)
 #let's check how good this model is
 
 #need to first convert test_std to PCA
+set.seed(123)
 pca_preds <- predict(object = svm_mdl2, newdata = test_std_pca)
 summary(pca_preds)
 
@@ -424,3 +426,58 @@ savePredictions(random_unseen_preds)
 
 
 ##XG BOOST
+set.seed(123)
+sampling_strategy<-trainControl(method = "repeatedcv",number = 2,repeats = 2,verboseIter = T,allowParallel = T)
+param_grid <- expand.grid(.nrounds = 250, .max_depth = c(2:6), .eta = c(0.1,0.11,0.09),
+                          .gamma = c(0.6, 0.3), .colsample_bytree = c(0.6),
+                          .min_child_weight = 1, .subsample = c(0.5, 0.6))
+
+xgb_tuned_model <- train(x = train_std[ , !(names(train_std) %in% c("target"))], 
+                         y = train_std$target, 
+                         method = "xgbTree",
+                         trControl = sampling_strategy,
+                         tuneGrid = param_grid)
+
+summary(xgb_tuned_model)
+xgb_tuned_model
+
+xgb_test_preds <- predict(xgb_tuned_model, test_std)
+confusionMatrix(xgb_test_preds, test_std$target)
+
+xgb_unseen_preds <- predict(xgb_tuned_model, unseen_std)
+table(xgb_unseen_preds)
+savePredictions(xgb_unseen_preds)
+saveRDS(xgb_tuned_model, file = 'xgb_tuned_model.RDS')
+
+
+#what about xgb with oversampled dataset?
+set.seed(123)
+balanced_train_std <- compensateSample(train_std, method='both')
+table(balanced_train_std$target)
+
+xgb_bal_mdl <- train(x = balanced_train_std[ , !(names(balanced_train_std) %in% c("target"))], 
+                     y = balanced_train_std$target, 
+                     method = "xgbTree",
+                     trControl = sampling_strategy,
+                     tuneGrid = param_grid)
+
+
+xgb_bal_test_preds <- predict(xgb_bal_mdl, test_std)
+confusionMatrix(xgb_bal_test_preds, test_std$target)
+xgb_bal_unseen_preds <- predict(xgb_bal_mdl, unseen_std)
+table(xgb_bal_unseen_preds)
+savePredictions(xgb_bal_unseen_preds)
+
+#what about xgb with pca?
+set.seed(123)
+xgb_pca_mdl <- train(x = train_pca_data[ , !(names(train_pca_data) %in% c("target"))], 
+                     y = train_pca_data$target, 
+                     method = "xgbTree",
+                     trControl = sampling_strategy,
+                     tuneGrid = param_grid)
+
+xgb_pca_test_preds <- predict(xgb_pca_mdl, test_std_pca)
+confusionMatrix(xgb_pca_test_preds, test_std$target)
+
+
+
