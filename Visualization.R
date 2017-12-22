@@ -7,24 +7,21 @@ rm(list = ls(all = TRUE))
 #Libraries
 
 library(tidyverse)
-library(lubridate)
 library(caret)
 library(DMwR)
-library(forecast)
-library(lubridate)
-library(imputeTS)
-library(TTR)
-library(graphics)
-library(zoo)
 
 ## Reading data
 
-getRawData <- function(path="", data_file="train.csv", target="", sep = ',', header = TRUE) {
+getRawData <- function(path="", 
+                       data_file="train.csv", 
+                       target="", sep = ',',
+                       header = TRUE) {
   if(!file.exists(data_file)) {
     return(NULL)    
   }
   setwd(path)
-  raw_data <- read.csv(file = data_file, header = header, sep = sep, colClasses = 'numeric')
+  raw_data <- read.csv(file = data_file, header = header, 
+                       sep = sep, colClasses = 'numeric')
   
   if (!(target == "")) {
     raw_data[,colnames(raw_data) %in% target] <- as.factor(as.character(raw_data[, colnames(raw_data) %in% target]))
@@ -67,11 +64,11 @@ getPreProcessedData <- function(path=getwd(),
   rm(colstoremove, sparsecols)
   
   
-  rownames(fin_data) <- fin_data$ID
-  fin_data$ID <- NULL
+  rownames(preproc_data) <- preproc_data$ID
+  preproc_data$ID <- NULL
   
-  constant_cols <- colnames(fin_data[ , sapply(preproc_data, function(v){ var(v, na.rm=TRUE)==0})])
-  preproc_data <- fin_data[, !colnames(preproc_data) %in% constant_cols]
+  constant_cols <- colnames(preproc_data[ , sapply(preproc_data, function(v){ var(v, na.rm=TRUE)==0})])
+  preproc_data <- preproc_data[, !colnames(preproc_data) %in% constant_cols]
   rm(constant_cols)
   
   #IMPUTATION
@@ -112,7 +109,7 @@ genboxplot <- function(data=data.frame) {
 
 setwd('~/datasets/CSE7305c_CUTe')
 fin_data <- getPreProcessedData(path = getwd(), data_file = 'train.csv', target = 'target', sep = ',', header = TRUE, imputed_file = 'imputed_data.csv', na_threshold = 0.3, zero_threshold = 0.5)
-
+getwd()
 
 #split into train and test
 #will use caret package
