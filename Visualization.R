@@ -34,10 +34,11 @@ getPreProcessedData <- function(path=getwd(),
                                 target="target", 
                                 sep = ',', 
                                 header = TRUE, 
-                                preproc_file = 'preproc_data.csv',
                                 na_threshold = 0.3,
                                 zero_threshold = 0.5) {
   setwd(path)
+  preproc_file <- paste('preproc_', data_file, sep="")
+  
   if (file.exists(preproc_file)) {
     data <- read.csv(preproc_file)
     if (!class(data[, colnames(data) %in% target]) == 'factor') {
@@ -45,10 +46,8 @@ getPreProcessedData <- function(path=getwd(),
     }
     return(data)
   }
+  #else
   raw_data = getRawData(path, data_file, target, sep, header)
-  
-  
-  
   #remove empty columns
   emptycols <- colnames(raw_data[,sapply(raw_data[,!colnames(raw_data) %in% target], function(x) { all(is.na(x))})])
   preproc_data <- raw_data[, !colnames(raw_data) %in% emptycols]
@@ -76,60 +75,89 @@ getPreProcessedData <- function(path=getwd(),
   #now we set up the data frame with just the columns  
   preproc_data <- preproc_data[, !colnames(x_preproc) %in% names(colstoremove)]
   
-  write.csv(x = preproc_data, file = 'preproc_data.csv', row.names = FALSE)
+  write.csv(x = preproc_data, file = preproc_file, row.names = FALSE)
   return(preproc_data)
 }
 
 
-standardizeData <- function(preproc_data=data.frame(), target='target') {
-  #Standardization
+standardizeData <- function(preproc_data=data.frame(), target='target', for_train=TRUE) {
   train_std <- data.frame()
   test_std <- data.frame()
-  if (file.exists('train_std.csv') & (file.exists('test_std.csv'))) {
-    train_std <- read.csv('train_std.csv')
-    if (!class(train_std[, colnames(train_std) %in% target]) == 'factor') {
-      train_std[,colnames(train_std) %in% target] <- as.factor(as.character(train_std[,colnames(train_std) %in% target]))
+  filename_prefix <- deparse(substitute(preproc_data))
+  print(filename_prefix)
+  
+  if (for_train==TRUE) {
+    print('i am here')
+    train_filename <- paste(filename_prefix, '_train_std.csv', sep="") 
+    test_filename <- paste(filename_prefix, '_test_std.csv', sep="")
+    print(train_filename)
+    print(test_filename)
+    if (file.exists(train_filename) & file.exists(test_filename)) {
+      train_std <- read.csv(train_filename)
+      if (!class(train_std[, colnames(train_std) %in% target]) == 'factor') {
+        train_std[,colnames(train_std) %in% target] <- as.factor(as.character(train_std[,colnames(train_std) %in% target]))
+      }
+      test_std <- read.csv(test_filename)
+      if (!class(test_std[, colnames(test_std) %in% target]) == 'factor') {
+        test_std[,colnames(test_std) %in% target] <- as.factor(as.character(test_std[,colnames(test_std) %in% target]))
+      }
+    } else {
+      #else
+      library(RANN)
+    
+      #split into train and test
+      #will use caret package
+      train_rows <- createDataPartition(preproc_data$target, p = 0.7, list = FALSE)
+      train_data <- preproc_data[train_rows,]
+      test_data <- preproc_data[-train_rows,]
+      prop.table(table(preproc_data$target))
+      prop.table(table(train_data$target))
+      prop.table(table(test_data$target))
+      #remove original data to conserve memory
+    
+      rm(train_rows)
+      
+      #standardize
+      set.seed(1234)
+      
+      std_preds <- preProcess(x = train_data[,!colnames(train_data) %in% target], 
+                              method = c("range", "knnImpute"))
+      saveRDS(std_preds, file='std_preds.RDS')
+      
+      train_std <- predict(std_preds, train_data)
+      test_std <- predict(std_preds, test_data)
+
+      
+      #the imputation takes a lot of time, so I will write it to csv in case i need
+      #to resume later.
+      write.csv(train_std, train_filename, row.names = FALSE)
+      write.csv(test_std, test_filename, row.names = FALSE)
     }
-    test_std <- read.csv('test_std.csv')
-    if (!class(test_std[, colnames(test_std) %in% target]) == 'factor') {
-      test_std[,colnames(test_std) %in% target] <- as.factor(as.character(test_std[,colnames(test_std) %in% target]))
-    }
+    retlist <- list(train_std, test_std)
+    return(retlist)
   } else {
-    #else
-    library(RANN)
-  
-    #split into train and test
-    #will use caret package
-    train_rows <- createDataPartition(preproc_data$target, p = 0.7, list = FALSE)
-    train_data <- preproc_data[train_rows,]
-    test_data <- preproc_data[-train_rows,]
-    prop.table(table(preproc_data$target))
-    prop.table(table(train_data$target))
-    prop.table(table(test_data$target))
-    #remove original data to conserve memory
-  
-    rm(train_rows)
+    unseen_filename <- paste(filename_prefix, '_std.csv', sep="")
+    print(unseen_filename)
+    unseen_std <- data.frame()
+    if(file.exists(unseen_filename)) {
+      unseen_std <- read.csv(unseen_filename, colClass='numeric')
+    } else {
+      std_preds <- readRDS(file = 'std_preds.RDS')
+      unseen_std <- predict(std_preds, preproc_data)
+      write.csv(x = unseen_std, file = unseen_filename, row.names = FALSE)
+    }
+    return(unseen_std)
     
-    #standardize
-    set.seed(1234)
-    
-    std_preds <- preProcess(x = train_data[,!colnames(train_data) %in% target], 
-                            method = c("range", "knnImpute"))
-    std_data <- predict(std_preds, train_data)
-    train_std <- predict(std_preds, train_data)
-    test_std <- predict(std_preds, test_data)
-    rm(std_preds)
-    
-    
-    #the imputation takes a lot of time, so I will write it to csv in case i need
-    #to resume later.
-    write.csv(train_std, "train_std.csv", row.names = FALSE)
-    write.csv(test_std, "test_std.csv", row.names = FALSE)
   }
-  retlist <- list(train_std, test_std)
-  return(retlist)
 }
 
+savePredictions <- function(predictions) {
+  unseen_raw <- read.csv(file = 'test.csv', header = TRUE)
+  submission <- data.frame('ID'=unseen_raw$ID, 'prediction'=predictions)
+  rownames(submission) <- c(1:nrow(submission))
+  rownames(submission)
+  write.csv(x = submission, file = 'submission.csv')
+}
 
 genplot <- function(data=data.frame(), y='y') {
   require(reshape2)
@@ -155,7 +183,6 @@ fin_data <- getPreProcessedData(path = getwd(),
                                 data_file = 'train.csv', 
                                 target = 'target', sep = ',', 
                                 header = TRUE, 
-                                preproc_file = 'preproc_data.csv', 
                                 na_threshold = 0.3, 
                                 zero_threshold = 0.5)
 
@@ -213,17 +240,17 @@ summary(svm_mdl1)
 #Trying with PCA to reduce #dimensions
 train_pca <- prcomp(x = train_std[,!colnames(train_std) %in% 'target'])
 summary(train_pca)
-#This shows that first 20 components can account for approximately 97% of variance in the dataset.
+#This shows that first 25 components can account for approximately 98% of variance in the dataset.
 # So building an SVM Model with this dataset
 
 train_pca_data <- data.frame(train_pca$x[,1:25], target=train_std$target)
+test_std_pca <- predict(train_pca, newdata = test_std)
+test_std_pca <- as.data.frame(test_std_pca[,1:25])
 
 svm_mdl2 <- svm(target ~ ., data = train_pca_data, kernel = "linear")
 
 summary(svm_mdl2)
 #let's check how good this model is
-test_std_pca <- predict(train_pca, newdata = test_std)
-test_std_pca <- as.data.frame(test_std_pca[,1:25])
 
 #need to first convert test_std to PCA
 pca_preds <- predict(object = svm_mdl2, newdata = test_std_pca)
@@ -243,29 +270,157 @@ svm_mdl4 <- svm(target ~ ., data = train_pca_data, kernel = "sigmoid", cost=400)
 summary(svm_mdl4)
 
 svm_mdl4_preds <- predict(object = svm_mdl4, newdata = test_std_pca)
+table(svm_mdl4_preds)
 confusionMatrix(svm_mdl4_preds, test_std$target)
 
+##now with validation data
+unseen_data <- getPreProcessedData(path = getwd(), data_file = 'test.csv', target = 'target', na_threshold = 0.3, zero_threshold = 0.5)
+unseen_std <- standardizeData(preproc_data = unseen_data, for_train = FALSE)
 
-#since sigmoid is giving good results, will now tune the hyper parameters
-svm_fit <- trainControl(method = "repeatedcv", repeats = 3, number = 4)
-svmSigmaGrid <- expand.grid(.C=c(10^-2, 10^-1, 10^1), .sigma=c(1, 10, 25))
-svm_mdl5 <- train(target ~ ., data = train_pca_data, 
-                  method = "svmRadialSigma",
-                  tuneGrid = svmSigmaGrid, 
-                  trControl = svm_fit)
+unseen_std_pca <- predict(train_pca, unseen_std)
+unseen_std_pca <- unseen_std_pca[,1:25]
+
+unseen_preds <- predict(svm_mdl4, newdata = unseen_std_pca)
+
+table(unseen_preds)
+savePredictions(unseen_preds)
+
+svm_mdl5 <- svm(target ~ ., data = train_std, kernel = 'sigmoid', cost=1000)
+summary(svm_mdl5)
+mdl5_test_preds <- predict(svm_mdl5, test_std[,!colnames(test_std) %in% 'target'])
+
+confusionMatrix(mdl5_test_preds, test_std$target)
+
+unseen_mdl5_preds <- predict(svm_mdl5, unseen_std)
+table(unseen_preds)
+savePredictions(unseen_preds)
 
 
-svm_mdl4
 
-svm_mdl3 <- train(Cancer ~ ., data = train_std, 
-                  method = "svmLinear",
-                  tuneGrid = data.frame(.C = c(0.025, 0.05, 0.075, 0.1, 0.125, 0.150)), metric = "Accuracy", 
-                  trControl = svm_fit)
 
-svm_mdl3
-svm_mdl3$method
-svm_mdl3$modelType
-str(svm_mdl3$bestTune)
-svm_mdl3$metric
-svm_mdl3$control
+library(ROCR)
+mdl5_preds <- predict(object = svm_mdl5, type="response")
+class(mdl5_preds)
+table(mdl5_preds)
+mdl5_train_pred <- prediction(as.numeric(mdl5_preds), train_std$target)
+# The performance() function from the ROCR package helps us extract metrics such as True positive rate, False positive rate etc. from the prediction object, we created above.
+vol_perf1 <- performance(prediction.obj = mdl5_train_pred, measure = "tpr", x.measure = "fpr")
+plot(vol_perf1, col = rainbow(10), colorize=T, print.cutoffs.at=(seq(0,1,0.05)))
 
+
+ctrl <- trainControl(method="repeatedcv",repeats = 3)
+knnFit <- train(target ~ ., 
+                data = train_std, 
+                method = "knn", 
+                trControl = ctrl)
+knnFit
+
+plot(knnFit)
+
+knn_preds <- predict(knnFit, newdata = test_std)
+
+confusionMatrix(knn_preds, test_std$target)
+unseen_preds <- predict(knnFit, newdata = unseen_std)
+
+table(unseen_preds)
+savePredictions(unseen_preds)
+
+
+compensateSample <- function(train_std, method='both') {
+  if(!require(ROSE)) {
+    install.packages('ROSE')
+    require(ROSE)
+  }
+  # if(method == 'over') {
+  #   N <- nrow(train_std)
+  # } else {
+  #   N <- nrow(train_std)
+  # }
+  N <- nrow(train_std)
+  return(ovun.sample(target ~ ., data = train_std, method = method, N = N, seed = 1234)$data)
+}
+
+balanced_train_std <- compensateSample(train_std, method='over')
+table(balanced_train_std$target)
+
+svm_mdl6 <- svm(target ~ ., data = balanced_train_std, kernel = 'sigmoid', cost=400)
+summary(svm_mdl6)
+mdl6_test_preds <- predict(svm_mdl6, test_std[,!colnames(test_std) %in% 'target'])
+
+confusionMatrix(mdl6_test_preds, test_std$target)
+
+unseen_mdl65_preds <- predict(svm_mdl6, unseen_std)
+table(unseen_mdl65_preds)
+savePredictions(unseen_mdl65_preds)
+
+
+#RPART
+require(rpart)
+set.seed(123)
+trainCtrl <- trainControl(method = 'repeatedcv', number = 4, repeats = 2)
+rpart_grid <-expand.grid(data.frame(.cp = c(0.005, 0.004, 0.003, 0.002, 0.001)))
+rpart_mdl <- train(target~., data = train_std, method='rpart', trControl = trainCtrl, tuneGrid = rpart_grid)
+print(rpart_mdl)
+plot(rpart_mdl)
+plot(rpart_mdl$finalModel)
+
+rpart_test_preds <- predict(rpart_mdl, test_std)
+confusionMatrix(rpart_test_preds, test_std$target)
+
+rpart_unseen_preds <- predict(rpart_mdl, unseen_std)
+table(rpart_unseen_preds)
+savePredictions(rpart_unseen_preds)
+
+
+
+##C5.0
+require(C50)
+set.seed(123)
+c50_mdl <- C5.0(formula=target~., data = train_std)
+plot(c50_mdl)
+
+c50_test_preds <- predict(c50_mdl, test_std)
+confusionMatrix(c50_test_preds, test_std$target)
+c50_unseen_preds <- predict(c50_mdl, unseen_std)
+table(c50_unseen_preds)
+savePredictions(c50_unseen_preds)
+
+#C5.0 on balanced data
+set.seed(123)
+c50_bal_mdl <- C5.0(target ~ ., data = balanced_train_std)
+plot(c50_mdl)
+c50_bal_test_preds <- predict(c50_bal_mdl, test_std)
+confusionMatrix(c50_bal_test_preds, test_std$target)
+
+c50_bal_unseen_preds <- predict(c50_bal_mdl, unseen_std)
+table(c50_bal_unseen_preds)
+savePredictions(c50_bal_unseen_preds)
+##Random Forest
+require(randomForest)
+set.seed(123)
+random_mdl <- randomForest(formula = target ~ ., data = train_std, keep.forest = TRUE, ntree = 500)
+
+print(random_mdl)
+
+random_preds <- predict(random_mdl, test_std, type = 'response')
+confusionMatrix(random_preds, test_std$target)
+
+random_unseen_preds <- predict(random_mdl, unseen_std)
+table(random_unseen_preds)
+savePredictions(random_unseen_preds)
+
+
+##Random Forest with balanced data-set
+set.seed(123)
+bal_rnd_mdl <- randomForest(target ~ ., balanced_train_std, keep.forest = TRUE, ntree = 300)
+print(bal_rnd_mdl)
+bal_rnd_tst_prds <- predict(bal_rnd_mdl, test_std, type = 'response')
+confusionMatrix(bal_rnd_tst_prds, test_std$target)
+
+bal_unseen_preds <- predict(bal_rnd_mdl, unseen_std)
+table(bal_unseen_preds)
+savePredictions(random_unseen_preds)
+
+
+
+##XG BOOST
