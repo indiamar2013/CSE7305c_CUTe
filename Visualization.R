@@ -166,3 +166,29 @@ cors <- cor(train_data[,!colnames(train_data) %in% c("target")])
 
 ggcorrplot(cors, hc.order=TRUE, type = "upper", insig = "blank")
 
+
+## Model Building
+
+#First an SVM model - we need to determine optimal C, so will use train() from caret package
+
+svm_fit <- trainControl(method = "repeatedcv", repeats = 5, number = 4)
+svm_mdl1 <- train(target ~ ., data = train_data, 
+                  method = "svmLinear",
+                  tuneGrid = data.frame(.C = c(10^-4, 10^-3, 10^-2, 10^-1, 10^1, 10^2, 10^3)),
+                  trControl = svm_fit)
+
+
+svm_mdl1
+
+svm_mdl3 <- train(Cancer ~ ., data = train_std, 
+                  method = "svmLinear",
+                  tuneGrid = data.frame(.C = c(0.025, 0.05, 0.075, 0.1, 0.125, 0.150)), metric = "Accuracy", 
+                  trControl = svm_fit)
+
+svm_mdl3
+svm_mdl3$method
+svm_mdl3$modelType
+str(svm_mdl3$bestTune)
+svm_mdl3$metric
+svm_mdl3$control
+
