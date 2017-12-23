@@ -293,7 +293,9 @@ predictModel <- function(model_name = 'mdl', model, test_data, unseen_data) {
 }
 
 loadModel <- function(model_name='svm_mdl') {
-  rdsFile <- paste(model_name, ".rds", sep="")
+  
+  rdsFile <- paste(model_name, ".RDS", sep="")
+  print(rdsFile)
   if (file.exists(rdsFile)) {
     mdl <- readRDS(rdsFile)
     return(mdl)
@@ -333,33 +335,33 @@ predictModel(model_name = 'svm_std_mdl', svm_mdl, test_std, unseen_std)
 
 
 
-library(ROCR)
-mdl5_preds <- predict(object = svm_mdl5, type="response")
-class(mdl5_preds)
-table(mdl5_preds)
-mdl5_train_pred <- prediction(as.numeric(mdl5_preds), train_std$target)
-# The performance() function from the ROCR package helps us extract metrics such as True positive rate, False positive rate etc. from the prediction object, we created above.
-vol_perf1 <- performance(prediction.obj = mdl5_train_pred, measure = "tpr", x.measure = "fpr")
-plot(vol_perf1, col = rainbow(10), colorize=T, print.cutoffs.at=(seq(0,1,0.05)))
-
-
-ctrl <- trainControl(method="repeatedcv",repeats = 3)
-knnFit <- train(target ~ ., 
-                data = train_std, 
-                method = "knn", 
-                trControl = ctrl)
-knnFit
-
-plot(knnFit)
-
-knn_preds <- predict(knnFit, newdata = test_std)
-
-confusionMatrix(knn_preds, test_std$target)
-unseen_preds <- predict(knnFit, newdata = unseen_std)
-
-table(unseen_preds)
-savePredictions(unseen_preds)
-
+# library(ROCR)
+# mdl5_preds <- predict(object = svm_mdl5, type="response")
+# class(mdl5_preds)
+# table(mdl5_preds)
+# mdl5_train_pred <- prediction(as.numeric(mdl5_preds), train_std$target)
+# # The performance() function from the ROCR package helps us extract metrics such as True positive rate, False positive rate etc. from the prediction object, we created above.
+# vol_perf1 <- performance(prediction.obj = mdl5_train_pred, measure = "tpr", x.measure = "fpr")
+# plot(vol_perf1, col = rainbow(10), colorize=T, print.cutoffs.at=(seq(0,1,0.05)))
+# 
+# 
+# ctrl <- trainControl(method="repeatedcv",repeats = 3)
+# knnFit <- train(target ~ ., 
+#                 data = train_std, 
+#                 method = "knn", 
+#                 trControl = ctrl)
+# knnFit
+# 
+# plot(knnFit)
+# 
+# knn_preds <- predict(knnFit, newdata = test_std)
+# 
+# confusionMatrix(knn_preds, test_std$target)
+# unseen_preds <- predict(knnFit, newdata = unseen_std)
+# 
+# table(unseen_preds)
+# savePredictions(unseen_preds)
+# 
 
 compensateSample <- function(train_std, method='both') {
   if(!require(ROSE)) {
@@ -467,81 +469,74 @@ if(is.null(mdl)) {
                            method = "xgbTree",
                            trControl = sampling_strategy,
                            tuneGrid = param_grid)
-  saveModel(model_name = 'random_forest_bal_std_mdl', mdl)
+  saveModel(model_name = 'xgboost_std_mdl', mdl)
 }
-predictModel(model_name = 'random_forest_bal_std_mdl', mdl, test_std, unseen_std)
-
-summary(xgb_tuned_model)
-xgb_tuned_model
-
-xgb_test_preds <- predict(xgb_tuned_model, test_std)
-confusionMatrix(xgb_test_preds, test_std$target, mode = 'everything')
-
-xgb_unseen_preds <- predict(xgb_tuned_model, unseen_std)
-table(xgb_unseen_preds)
-savePredictions(xgb_unseen_preds)
-saveRDS(xgb_tuned_model, file = 'xgb_tuned_model.RDS')
+predictModel(model_name = 'xgboost_std_mdl', mdl, test_std, unseen_std)
+#this gave a score of 38.96%
 
 
 #what about xgb with oversampled dataset?
-set.seed(123)
-balanced_train_std <- compensateSample(train_std, method='both')
-table(balanced_train_std$target)
-
-xgb_bal_mdl <- train(x = balanced_train_std[ , !(names(balanced_train_std) %in% c("target"))], 
-                     y = balanced_train_std$target, 
-                     method = "xgbTree",
-                     trControl = sampling_strategy,
-                     tuneGrid = param_grid)
-
-
-xgb_bal_test_preds <- predict(xgb_bal_mdl, test_std)
-confusionMatrix(xgb_bal_test_preds, test_std$target)
-xgb_bal_unseen_preds <- predict(xgb_bal_mdl, unseen_std)
-table(xgb_bal_unseen_preds)
-savePredictions(xgb_bal_unseen_preds)
-
-#what about xgb with pca?
-set.seed(123)
-xgb_pca_mdl <- train(x = train_pca_data[ , !(names(train_pca_data) %in% c("target"))], 
-                     y = train_pca_data$target, 
-                     method = "xgbTree",
-                     trControl = sampling_strategy,
-                     tuneGrid = param_grid)
-
-xgb_pca_test_preds <- predict(xgb_pca_mdl, test_std_pca)
-confusionMatrix(xgb_pca_test_preds, test_std$target)
-
-
-setwd('~/datasets/CSE7305c_CUTe')
-
-raw_data <- read.csv('train.csv')
-raw_data$ID <- NULL
-raw_data$Attr37 <- NULL
-raw_data$Attr21 <- NULL
-target <- raw_data$target
-raw_data$target <- NULL
-str(raw_data)
-colSums(is.na(raw_data))
-
-#Attr29 - log of TotalAssets is the key variable on which all other
-#columns are predicated on. If this is NA, we should remove such rows
-Attr29_NA_Rows <- raw_data[which(is.na(raw_data$Attr29)),]
-Attr29_NA_Rows
-nrow(raw_data)
-rownames(Attr29_NA_Rows)
-raw_data <- raw_data[!rownames(raw_data) %in% rownames(Attr29_NA_Rows),]
-nrow(raw_data)
-#Row with ID 5464 has very large values. Removing that
-raw_data[5674,]
-raw_data <- raw_data[-5674,]
-nrow(raw_data)
-summary(raw_data)
-library(DMwR)
-imputed_data <- knnImputation(data = raw_data, scale =T)
-summary(imputed_data)
-colSums(is.na(imputed_data))
-for(i in 1:ncol(imputed_data)) {
-  print(paste(colnames(imputed_data)[i], max(imputed_data[,i])))
+mdl <- loadModel(model_name = 'xgboost_bal_std_mdl')
+if(is.null(mdl)) {
+  set.seed(123)
+  balanced_train_std <- compensateSample(train_std, method='both')
+  sampling_strategy<-trainControl(method = "repeatedcv",number = 2,repeats = 2,verboseIter = T,allowParallel = T)
+  param_grid <- expand.grid(.nrounds = 250, .max_depth = c(2:6), .eta = c(0.1,0.11,0.09),
+                            .gamma = c(0.6, 0.3), .colsample_bytree = c(0.6),
+                            .min_child_weight = 1, .subsample = c(0.5, 0.6))
+  
+  mdl <- train(x = balanced_train_std[ , !(names(train_std) %in% c("target"))], 
+               y = balanced_train_std$target, 
+               method = "xgbTree",
+               trControl = sampling_strategy,
+               tuneGrid = param_grid)
+  saveModel(model_name = 'xgboost_bal_std_mdl', mdl)
 }
-summary(train_std)
+predictModel(model_name = 'xgboost_bal_std_mdl', mdl, test_std, unseen_std)
+#this model got a score of 47%
+
+##Stacking
+svm_mdl <- loadModel(model_name = 'svm_std_mdl')
+rpart_mdl <- loadModel(model_name = 'rpart_std_mdl')
+c50_mdl <- loadModel(model_name = 'C50_std_mdl')
+xgb_std_mdl <- loadModel(model_name = 'xgboost_std_mdl')
+xgb_bal_std_mdl <- loadModel(model_name = 'xgboost_bal_std_mdl')
+
+svm_train_preds <- predict(svm_mdl, train_std)
+rpart_train_preds <- predict(rpart_mdl, train_std)
+c50_train_preds <- predict(c50_mdl, train_std)
+xgb_train_preds <- predict(xgb_std_mdl, train_std)
+xgb_bal_train_preds <- predict(xgb_bal_std_mdl, balanced_train_std)
+ensemble_train_data <- data.frame(SVM = svm_train_preds, 
+                               RPART = rpart_train_preds,
+                               C50 = c50_train_preds,
+                               XGB = xgb_train_preds,
+                               XGB_BAL = xgb_bal_train_preds)
+ensemble_train_data <- data.frame(sapply(ensemble_train_data, as.factor))
+ensemble_train_data <- cbind(ensemble_train_data, target = train_std$target)
+str(ensemble_train_data)
+ensemble_model = glm(target ~ ., ensemble_train_data, family = binomial)
+ensemble_train_preds <- predict(ensemble_model, ensemble_train_data, type = 'response')
+ensemble_train_preds <- ifelse(ensemble_train_preds > 0.5, 1, 0)
+confusionMatrix(ensemble_train_preds, train_std$target)
+table(ensemble_train_preds)
+
+##Now on unseen data
+svm_unseen_preds <- predict(svm_mdl, unseen_std)
+rpart_unseen_preds <- predict(rpart_mdl, unseen_std)
+c50_unseen_preds <- predict(c50_mdl, unseen_std)
+xgb_unseen_preds <- predict(xgb_std_mdl, unseen_std)
+xgb_bal_unseen_preds <- predict(xgb_bal_std_mdl, unseen_std)
+ensemble_unseen_data <- data.frame(SVM = svm_unseen_preds, 
+                                  RPART = rpart_unseen_preds,
+                                  C50 = c50_unseen_preds,
+                                  XGB = xgb_unseen_preds,
+                                  XGB_BAL = xgb_bal_unseen_preds)
+ensemble_unseen_data <- data.frame(sapply(ensemble_unseen_data, as.factor))
+ensemble_unseen_preds <- predict(ensemble_model, ensemble_unseen_data, type = 'response')
+ensemble_unseen_preds <- ifelse(ensemble_unseen_preds > 0.5, 1, 0)
+table(ensemble_unseen_preds)
+str(ensemble_unseen_preds)
+savePredictions(ensemble_unseen_preds, name = 'stack_ensemble')
+
+
