@@ -87,7 +87,6 @@ standardizeData <- function(preproc_data=data.frame(), target='target', for_trai
   print(filename_prefix)
   
   if (for_train==TRUE) {
-    print('i am here')
     train_filename <- paste(filename_prefix, '_train_std.csv', sep="") 
     test_filename <- paste(filename_prefix, '_test_std.csv', sep="")
     print(train_filename)
@@ -120,13 +119,20 @@ standardizeData <- function(preproc_data=data.frame(), target='target', for_trai
       #standardize
       set.seed(1234)
       
+      #first impute only
+
       std_preds <- preProcess(x = train_data[,!colnames(train_data) %in% target], 
-                              method = c("range", "knnImpute"))
-      saveRDS(std_preds, file='std_preds.RDS')
+                              method = c("center", "scale", "knnImpute"))
       
       train_std <- predict(std_preds, train_data)
       test_std <- predict(std_preds, test_data)
+      
+      # std_preds <- preProcess(x = train_data[,!colnames(train_data) %in% target], 
+      #                         method = c("center", "scale"))
+      # train_std <- predict(std_preds, train_data)
+      # test_std <- predict(std_preds, test_data)
 
+      saveRDS(std_preds, file='std_preds.RDS')
       
       #the imputation takes a lot of time, so I will write it to csv in case i need
       #to resume later.
@@ -151,11 +157,12 @@ standardizeData <- function(preproc_data=data.frame(), target='target', for_trai
   }
 }
 
-savePredictions <- function(predictions) {
+savePredictions <- function(predictions, name='') {
   unseen_raw <- read.csv(file = 'test.csv', header = TRUE)
   submission <- data.frame('ID'=unseen_raw$ID, 'prediction'=predictions)
   rownames(submission) <- c(1:nrow(submission))
   rownames(submission)
+  write.csv(x = submission, file = paste('submission',name,'.csv',sep=""))
   write.csv(x = submission, file = 'submission.csv')
 }
 
@@ -238,6 +245,8 @@ summary(svm_mdl1)
 
 #NOTE: This completed with a warning that max iterations were reached.
 #Trying with PCA to reduce #dimensions
+
+##PCA
 set.seed(123)
 train_pca <- prcomp(x = train_std[,!colnames(train_std) %in% 'target'])
 summary(train_pca)
@@ -247,6 +256,7 @@ summary(train_pca)
 train_pca_data <- data.frame(train_pca$x[,1:25], target=train_std$target)
 test_std_pca <- predict(train_pca, newdata = test_std)
 test_std_pca <- as.data.frame(test_std_pca[,1:25])
+
 
 svm_mdl2 <- svm(target ~ ., data = train_pca_data, kernel = "linear")
 
@@ -265,37 +275,60 @@ svm_mdl3 <- svm(target ~ ., data = train_pca_data, kernel = "polynomial")
 
 svm_mdl3_preds <- predict(object = svm_mdl3, newdata = test_std_pca)
 confusionMatrix(svm_mdl3_preds, test_std$target)
-
-#tried the following
-#cost = 100, 500, 1000, 0.1, 0.01, 0.001
-svm_mdl4 <- svm(target ~ ., data = train_pca_data, kernel = "sigmoid", cost=400)
-summary(svm_mdl4)
-
-svm_mdl4_preds <- predict(object = svm_mdl4, newdata = test_std_pca)
-table(svm_mdl4_preds)
-confusionMatrix(svm_mdl4_preds, test_std$target)
-
-##now with validation data
-unseen_data <- getPreProcessedData(path = getwd(), data_file = 'test.csv', target = 'target', na_threshold = 0.3, zero_threshold = 0.5)
-unseen_std <- standardizeData(preproc_data = unseen_data, for_train = FALSE)
-
 unseen_std_pca <- predict(train_pca, unseen_std)
 unseen_std_pca <- unseen_std_pca[,1:25]
 
-unseen_preds <- predict(svm_mdl4, newdata = unseen_std_pca)
 
-table(unseen_preds)
-savePredictions(unseen_preds)
 
-svm_mdl5 <- svm(target ~ ., data = train_std, kernel = 'sigmoid', cost=1000)
-summary(svm_mdl5)
-mdl5_test_preds <- predict(svm_mdl5, test_std[,!colnames(test_std) %in% 'target'])
+saveModelTestMetrics <- function(modelname='', confmat) {
+  print(confmat)  
+}
 
-confusionMatrix(mdl5_test_preds, test_std$target)
+predictModel <- function(model_name = 'mdl', model, test_data, unseen_data) {
+  test_preds <- predict(model, test_data)
+  saveModelTestMetrics(model_name, confusionMatrix(test_preds, test_data$target, mode = 'everything'))
+  unseen_preds <- predict(model, unseen_data)
+  savePredictions(unseen_preds, name=model_name)
+  table(unseen_preds)
+}
 
-unseen_mdl5_preds <- predict(svm_mdl5, unseen_std)
-table(unseen_preds)
-savePredictions(unseen_preds)
+loadModel <- function(model_name='svm_mdl') {
+  rdsFile <- paste(model_name, ".rds", sep="")
+  if (file.exists(rdsFile)) {
+    mdl <- readRDS(rdsFile)
+    return(mdl)
+  } else {
+    return(NULL)
+  }
+}
+
+saveModel <- function(model_name='svm_mdl', model) {
+  saveRDS(object = model, file = paste(model_name, '.RDS', sep=""))
+}
+
+#tried the following
+
+#cost = 100, 500, 1000, 0.1, 0.01, 0.001. Best was with cost=400
+svm_mdl <- loadModel(model_name = 'svm_std_mdl')
+if (is.null(svm_mdl)) {
+  set.seed(123)
+  svm_mdl <- svm(target ~ ., data = train_std, kernel = 'sigmoid', cost=400)
+  saveModel(model_name = 'svm_std_mdl', svm_mdl)
+}
+predictModel(model_name = 'svm_std_mdl', svm_mdl, test_std, unseen_std)
+
+
+# 
+# 
+# svm_mdl5 <- svm(target ~ ., data = train_std, kernel = 'sigmoid', cost=1000)
+# summary(svm_mdl5)
+# mdl5_test_preds <- predict(svm_mdl5, test_std[,!colnames(test_std) %in% 'target'])
+# 
+# confusionMatrix(mdl5_test_preds, test_std$target)
+# 
+# unseen_mdl5_preds <- predict(svm_mdl5, unseen_std)
+# table(unseen_preds)
+# savePredictions(unseen_preds)
 
 
 
@@ -342,107 +375,107 @@ compensateSample <- function(train_std, method='both') {
   return(ovun.sample(target ~ ., data = train_std, method = method, N = N, seed = 1234)$data)
 }
 
-balanced_train_std <- compensateSample(train_std, method='over')
+balanced_train_std <- compensateSample(train_std, method='both')
 table(balanced_train_std$target)
 
-svm_mdl6 <- svm(target ~ ., data = balanced_train_std, kernel = 'sigmoid', cost=400)
-summary(svm_mdl6)
-mdl6_test_preds <- predict(svm_mdl6, test_std[,!colnames(test_std) %in% 'target'])
+set.seed(123)
 
-confusionMatrix(mdl6_test_preds, test_std$target)
-
-unseen_mdl65_preds <- predict(svm_mdl6, unseen_std)
-table(unseen_mdl65_preds)
-savePredictions(unseen_mdl65_preds)
+mdl <- loadModel(model_name = 'svm_bal_std_mdl')
+if (is.null(mdl)) {
+  set.seed(123)
+  mdl <- svm(target ~ ., data = balanced_train_std, kernel = 'sigmoid', cost=400)
+  saveModel(model_name = 'svm_bal_std_mdl', mdl)
+}
+predictModel(model_name = 'svm_bal_std_mdl', mdl, test_std, unseen_std)
 
 
 #RPART
-require(rpart)
-set.seed(123)
-trainCtrl <- trainControl(method = 'repeatedcv', number = 4, repeats = 2)
-rpart_grid <-expand.grid(data.frame(.cp = c(0.005, 0.004, 0.003, 0.002, 0.001)))
-rpart_mdl <- train(target~., data = train_std, method='rpart', trControl = trainCtrl, tuneGrid = rpart_grid)
-print(rpart_mdl)
-plot(rpart_mdl)
-plot(rpart_mdl$finalModel)
-
-rpart_test_preds <- predict(rpart_mdl, test_std)
-confusionMatrix(rpart_test_preds, test_std$target)
-
-rpart_unseen_preds <- predict(rpart_mdl, unseen_std)
-table(rpart_unseen_preds)
-savePredictions(rpart_unseen_preds)
-
+mdl <- loadModel(model_name = 'rpart_std_mdl')
+if (is.null(mdl)) {
+  require(rpart)
+  set.seed(123)
+  trainCtrl <- trainControl(method = 'repeatedcv', number = 4, repeats = 2)
+  rpart_grid <-expand.grid(data.frame(.cp = c(0.005, 0.004, 0.003, 0.002, 0.001)))
+  mdl <- train(target~., data = train_std, method='rpart', trControl = trainCtrl, tuneGrid = rpart_grid)
+  saveModel(model_name = 'rpart_std_mdl', mdl)
+}
+predictModel(model_name = 'rpart_std_mdl', mdl, test_std, unseen_std)
+##This model got F1-stat of 16.5% on Grader
+plot(mdl)
+plot(mdl$finalModel)
 
 
 ##C5.0
-require(C50)
-set.seed(123)
-c50_mdl <- C5.0(formula=target~., data = train_std)
-plot(c50_mdl)
-
-c50_test_preds <- predict(c50_mdl, test_std)
-confusionMatrix(c50_test_preds, test_std$target)
-c50_unseen_preds <- predict(c50_mdl, unseen_std)
-table(c50_unseen_preds)
-savePredictions(c50_unseen_preds)
+mdl <- loadModel(model_name = 'C50_std_mdl')
+if (is.null(mdl)) {
+  require(C50)
+  set.seed(123)
+  mdl <- C5.0(formula=target~., data = train_std)
+  saveModel(model_name = 'C50_std_mdl', mdl)
+}
+predictModel(model_name = 'C50_std_mdl', mdl, test_std, unseen_std)
+#This model got score of 28% on grader
 
 #C5.0 on balanced data
-set.seed(123)
-c50_bal_mdl <- C5.0(target ~ ., data = balanced_train_std)
-plot(c50_mdl)
-c50_bal_test_preds <- predict(c50_bal_mdl, test_std)
-confusionMatrix(c50_bal_test_preds, test_std$target)
+mdl <- loadModel(model_name = 'C50_bal_std_mdl')
+if (is.null(mdl)) {
+  require(C50)
+  set.seed(123)
+  mdl <- C5.0(formula=target~., data = balanced_train_std)
+  saveModel(model_name = 'C50_bal_std_mdl', mdl)
+}
+predictModel(model_name = 'C50_bal_std_mdl', mdl, test_std, unseen_std)
+#this model got a score of 28%
 
-c50_bal_unseen_preds <- predict(c50_bal_mdl, unseen_std)
-table(c50_bal_unseen_preds)
-savePredictions(c50_bal_unseen_preds)
 ##Random Forest
-require(randomForest)
-set.seed(123)
-random_mdl <- randomForest(formula = target ~ ., data = train_std, keep.forest = TRUE, ntree = 500)
+mdl <- loadModel(model_name = 'random_forest_std_mdl')
+if (is.null(mdl)) {
+  require(randomForest)
+  set.seed(123)
+  mdl <- randomForest(formula = target ~ ., data = train_std, keep.forest = TRUE, ntree = 500)
+  saveModel(model_name = 'random_forest_std_mdl', mdl)
+}
+predictModel(model_name = 'random_forest_std_mdl', mdl, test_std, unseen_std)
+#this got a score of 9%
 
-print(random_mdl)
-
-random_preds <- predict(random_mdl, test_std, type = 'response')
-confusionMatrix(random_preds, test_std$target)
-
-random_unseen_preds <- predict(random_mdl, unseen_std)
-table(random_unseen_preds)
-savePredictions(random_unseen_preds)
 
 
 ##Random Forest with balanced data-set
-set.seed(123)
-bal_rnd_mdl <- randomForest(target ~ ., balanced_train_std, keep.forest = TRUE, ntree = 300)
-print(bal_rnd_mdl)
-bal_rnd_tst_prds <- predict(bal_rnd_mdl, test_std, type = 'response')
-confusionMatrix(bal_rnd_tst_prds, test_std$target)
-
-bal_unseen_preds <- predict(bal_rnd_mdl, unseen_std)
-table(bal_unseen_preds)
-savePredictions(random_unseen_preds)
+mdl <- loadModel(model_name = 'random_forest_bal_std_mdl')
+if (is.null(mdl)) {
+  require(randomForest)
+  set.seed(123)
+  mdl <- randomForest(formula = target ~ ., data = balanced_train_std, keep.forest = TRUE, ntree = 500)
+  saveModel(model_name = 'random_forest_bal_std_mdl', mdl)
+}
+predictModel(model_name = 'random_forest_bal_std_mdl', mdl, test_std, unseen_std)
+#this model gave a score of 29%
 
 
 
 ##XG BOOST
-set.seed(123)
-sampling_strategy<-trainControl(method = "repeatedcv",number = 2,repeats = 2,verboseIter = T,allowParallel = T)
-param_grid <- expand.grid(.nrounds = 250, .max_depth = c(2:6), .eta = c(0.1,0.11,0.09),
-                          .gamma = c(0.6, 0.3), .colsample_bytree = c(0.6),
-                          .min_child_weight = 1, .subsample = c(0.5, 0.6))
-
-xgb_tuned_model <- train(x = train_std[ , !(names(train_std) %in% c("target"))], 
-                         y = train_std$target, 
-                         method = "xgbTree",
-                         trControl = sampling_strategy,
-                         tuneGrid = param_grid)
+mdl <- loadModel(model_name = 'xgboost_std_mdl')
+if(is.null(mdl)) {
+  set.seed(123)
+  sampling_strategy<-trainControl(method = "repeatedcv",number = 2,repeats = 2,verboseIter = T,allowParallel = T)
+  param_grid <- expand.grid(.nrounds = 250, .max_depth = c(2:6), .eta = c(0.1,0.11,0.09),
+                            .gamma = c(0.6, 0.3), .colsample_bytree = c(0.6),
+                            .min_child_weight = 1, .subsample = c(0.5, 0.6))
+  
+  mdl <- train(x = train_std[ , !(names(train_std) %in% c("target"))], 
+                           y = train_std$target, 
+                           method = "xgbTree",
+                           trControl = sampling_strategy,
+                           tuneGrid = param_grid)
+  saveModel(model_name = 'random_forest_bal_std_mdl', mdl)
+}
+predictModel(model_name = 'random_forest_bal_std_mdl', mdl, test_std, unseen_std)
 
 summary(xgb_tuned_model)
 xgb_tuned_model
 
 xgb_test_preds <- predict(xgb_tuned_model, test_std)
-confusionMatrix(xgb_test_preds, test_std$target)
+confusionMatrix(xgb_test_preds, test_std$target, mode = 'everything')
 
 xgb_unseen_preds <- predict(xgb_tuned_model, unseen_std)
 table(xgb_unseen_preds)
@@ -480,4 +513,35 @@ xgb_pca_test_preds <- predict(xgb_pca_mdl, test_std_pca)
 confusionMatrix(xgb_pca_test_preds, test_std$target)
 
 
+setwd('~/datasets/CSE7305c_CUTe')
 
+raw_data <- read.csv('train.csv')
+raw_data$ID <- NULL
+raw_data$Attr37 <- NULL
+raw_data$Attr21 <- NULL
+target <- raw_data$target
+raw_data$target <- NULL
+str(raw_data)
+colSums(is.na(raw_data))
+
+#Attr29 - log of TotalAssets is the key variable on which all other
+#columns are predicated on. If this is NA, we should remove such rows
+Attr29_NA_Rows <- raw_data[which(is.na(raw_data$Attr29)),]
+Attr29_NA_Rows
+nrow(raw_data)
+rownames(Attr29_NA_Rows)
+raw_data <- raw_data[!rownames(raw_data) %in% rownames(Attr29_NA_Rows),]
+nrow(raw_data)
+#Row with ID 5464 has very large values. Removing that
+raw_data[5674,]
+raw_data <- raw_data[-5674,]
+nrow(raw_data)
+summary(raw_data)
+library(DMwR)
+imputed_data <- knnImputation(data = raw_data, scale =T)
+summary(imputed_data)
+colSums(is.na(imputed_data))
+for(i in 1:ncol(imputed_data)) {
+  print(paste(colnames(imputed_data)[i], max(imputed_data[,i])))
+}
+summary(train_std)
