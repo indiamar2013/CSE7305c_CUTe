@@ -6,183 +6,8 @@ rm(list = ls(all = TRUE))
 
 #Libraries
 
-library(tidyverse)
-library(caret)
-library(DMwR)
+source('~/classes/CSE7305c_CUTe/Utils.R')
 
-## Reading data
-
-getRawData <- function(path="", 
-                       data_file="train.csv", 
-                       target="", sep = ',',
-                       header = TRUE) {
-  if(!file.exists(data_file)) {
-    return(NULL)    
-  }
-  setwd(path)
-  raw_data <- read.csv(file = data_file, header = header, 
-                       sep = sep, colClasses = 'numeric')
-  
-  if (!(target == "")) {
-    raw_data[,colnames(raw_data) %in% target] <- as.factor(as.character(raw_data[, colnames(raw_data) %in% target]))
-  }
-  return(raw_data)
-}
-
-getPreProcessedData <- function(path=getwd(), 
-                                data_file="train.csv", 
-                                target="target", 
-                                sep = ',', 
-                                header = TRUE, 
-                                na_threshold = 0.3,
-                                zero_threshold = 0.5) {
-  setwd(path)
-  preproc_file <- paste('preproc_', data_file, sep="")
-  
-  if (file.exists(preproc_file)) {
-    data <- read.csv(preproc_file)
-    if (!class(data[, colnames(data) %in% target]) == 'factor') {
-      data[,colnames(data) %in% target] <- as.factor(as.character(data[,colnames(data) %in% target]))
-    }
-    return(data)
-  }
-  #else
-  raw_data = getRawData(path, data_file, target, sep, header)
-  #remove empty columns
-  emptycols <- colnames(raw_data[,sapply(raw_data[,!colnames(raw_data) %in% target], function(x) { all(is.na(x))})])
-  preproc_data <- raw_data[, !colnames(raw_data) %in% emptycols]
-  rm(emptycols, raw_data)
-  
-  #remove the redundant id column
-  rownames(preproc_data) <- preproc_data$ID
-  preproc_data$ID <- NULL
-  
-  #all the checks and standardization needs to be done on the independent variables.
-  x_preproc <- preproc_data[,!colnames(preproc_data) %in% target]
-  
-  #remove columns with na beyond threshold
-  colswithna <- sort(colSums(is.na(x_preproc)), decreasing = TRUE)
-  colstoremove <- colswithna[colswithna > nrow(x_preproc)*na_threshold]
-  rm(colswithna)
-  #sparse columns
-  sparsecols <- sort(colSums(x_preproc) == 0, decreasing = TRUE)
-  append(colstoremove, sparsecols[sparsecols > round(nrow(x_preproc) * zero_threshold)])
-  rm(sparsecols)
-  constant_cols <- colnames(preproc_data[ , sapply(x_preproc, function(v){ var(v, na.rm=TRUE)==0})])
-  append(colstoremove, constant_cols)
-  rm(constant_cols)
-  colstoremove
-  #now we set up the data frame with just the columns  
-  preproc_data <- preproc_data[, !colnames(x_preproc) %in% names(colstoremove)]
-  
-  write.csv(x = preproc_data, file = preproc_file, row.names = FALSE)
-  return(preproc_data)
-}
-
-
-standardizeData <- function(preproc_data=data.frame(), target='target', for_train=TRUE) {
-  train_std <- data.frame()
-  test_std <- data.frame()
-  filename_prefix <- deparse(substitute(preproc_data))
-  print(filename_prefix)
-  
-  if (for_train==TRUE) {
-    train_filename <- paste(filename_prefix, '_train_std.csv', sep="") 
-    test_filename <- paste(filename_prefix, '_test_std.csv', sep="")
-    print(train_filename)
-    print(test_filename)
-    if (file.exists(train_filename) & file.exists(test_filename)) {
-      train_std <- read.csv(train_filename)
-      if (!class(train_std[, colnames(train_std) %in% target]) == 'factor') {
-        train_std[,colnames(train_std) %in% target] <- as.factor(as.character(train_std[,colnames(train_std) %in% target]))
-      }
-      test_std <- read.csv(test_filename)
-      if (!class(test_std[, colnames(test_std) %in% target]) == 'factor') {
-        test_std[,colnames(test_std) %in% target] <- as.factor(as.character(test_std[,colnames(test_std) %in% target]))
-      }
-    } else {
-      #else
-      library(RANN)
-    
-      #split into train and test
-      #will use caret package
-      train_rows <- createDataPartition(preproc_data$target, p = 0.7, list = FALSE)
-      train_data <- preproc_data[train_rows,]
-      test_data <- preproc_data[-train_rows,]
-      prop.table(table(preproc_data$target))
-      prop.table(table(train_data$target))
-      prop.table(table(test_data$target))
-      #remove original data to conserve memory
-    
-      rm(train_rows)
-      
-      #standardize
-      set.seed(1234)
-      
-      #first impute only
-
-      std_preds <- preProcess(x = train_data[,!colnames(train_data) %in% target], 
-                              method = c("center", "scale", "knnImpute"))
-      
-      train_std <- predict(std_preds, train_data)
-      test_std <- predict(std_preds, test_data)
-      
-      # std_preds <- preProcess(x = train_data[,!colnames(train_data) %in% target], 
-      #                         method = c("center", "scale"))
-      # train_std <- predict(std_preds, train_data)
-      # test_std <- predict(std_preds, test_data)
-
-      saveRDS(std_preds, file='std_preds.RDS')
-      
-      #the imputation takes a lot of time, so I will write it to csv in case i need
-      #to resume later.
-      write.csv(train_std, train_filename, row.names = FALSE)
-      write.csv(test_std, test_filename, row.names = FALSE)
-    }
-    retlist <- list(train_std, test_std)
-    return(retlist)
-  } else {
-    unseen_filename <- paste(filename_prefix, '_std.csv', sep="")
-    print(unseen_filename)
-    unseen_std <- data.frame()
-    if(file.exists(unseen_filename)) {
-      unseen_std <- read.csv(unseen_filename, colClass='numeric')
-    } else {
-      std_preds <- readRDS(file = 'std_preds.RDS')
-      unseen_std <- predict(std_preds, preproc_data)
-      write.csv(x = unseen_std, file = unseen_filename, row.names = FALSE)
-    }
-    return(unseen_std)
-    
-  }
-}
-
-savePredictions <- function(predictions, name='') {
-  unseen_raw <- read.csv(file = 'test.csv', header = TRUE)
-  submission <- data.frame('ID'=unseen_raw$ID, 'prediction'=predictions)
-  rownames(submission) <- c(1:nrow(submission))
-  rownames(submission)
-  write.csv(x = submission, file = paste('submission',name,'.csv',sep=""))
-  write.csv(x = submission, file = 'submission.csv')
-}
-
-genplot <- function(data=data.frame(), y='y') {
-  require(reshape2)
-  require(gridExtra)
-  df <- melt(data, id.vars = y, variable.name = 'series')
-  df
-  plt <- ggplot(df, aes(y,value)) + geom_point(aes(colour=series)) + facet_grid(series ~ .)
-  return(plt)
-}
-
-genboxplot <- function(data=data.frame) {
-  require(reshape2)
-  require(gridExtra)
-  numericcols <- data[,sapply(data, class) == 'numeric']
-  plt <- ggplot(stack(data), aes(x = ind, y = values)) +
-    geom_boxplot(aes(color=values))
-  return(plt)
-}
 
 
 setwd('~/datasets/CSE7305c_CUTe')
@@ -193,48 +18,56 @@ fin_data <- getPreProcessedData(path = getwd(),
                                 na_threshold = 0.3, 
                                 zero_threshold = 0.5)
 
-plt_df <- fin_data[,!colnames(fin_data) %in% c("target")]
-numplts <- 5
-numvars <- ncol(plt_df)
-numiters <- round(numvars/numplts)
-if (numvars > numiters*numplts) {
-  numiters <- numiters + 1
-}
-numiters
-ncol(plt_df)
-
+  
+# plt_df <- fin_data[,!colnames(fin_data) %in% c("target")]
+# numplts <- 5
+# numvars <- ncol(plt_df)
+# numiters <- round(numvars/numplts)
+# if (numvars > numiters*numplts) {
+#   numiters <- numiters + 1
+# }
+# numiters
+# ncol(plt_df)
+# 
+# # for (i in 1:numiters) {
+# #   startcol <- (((i-1)*numplts)+1)
+# #   ifelse (i == numiters, endcol <- ncol(plt_df), endcol <- i*numplts)
+# #   pltdf <- plt_df[, startcol: endcol]
+# #   pltdf$target <- train_data$target
+# #   print(genplot(data = pltdf, y='target'))
+# # }
+# 
+# 
 # for (i in 1:numiters) {
 #   startcol <- (((i-1)*numplts)+1)
 #   ifelse (i == numiters, endcol <- ncol(plt_df), endcol <- i*numplts)
 #   pltdf <- plt_df[, startcol: endcol]
-#   pltdf$target <- train_data$target
-#   print(genplot(data = pltdf, y='target'))
+#   print(genboxplot(pltdf))
 # }
-
-
-for (i in 1:numiters) {
-  startcol <- (((i-1)*numplts)+1)
-  ifelse (i == numiters, endcol <- ncol(plt_df), endcol <- i*numplts)
-  pltdf <- plt_df[, startcol: endcol]
-  print(genboxplot(pltdf))
-}
-rm(pltdf, numiters, i, numplts, numvars, startcol, plt_df)
-rm(endcol)
-summary(train_data)
-
-
-
+# rm(pltdf, numiters, i, numplts, numvars, startcol, plt_df)
+# rm(endcol)
+# summary(train_data)
+# 
+# 
+# 
 require(ggcorrplot)
-
-cors <- cor(train_data[,!colnames(train_data) %in% c("target")])
-
+# 
+cors <- cor(fin_data[,!colnames(fin_data) %in% c("target")])
+# 
 ggcorrplot(cors, hc.order=TRUE, type = "upper", insig = "blank")
-
-
+# 
+# 
 #standardize the data
+
 stdlist <- standardizeData(fin_data, target = 'target')
+
 train_std <- data.frame(stdlist[1])
 test_std <- data.frame(stdlist[2])
+
+unseen_data <- read.csv('test.csv', header = TRUE)
+unseen_data <- unseen_data[,colnames(unseen_data) %in% colnames(train_std)]
+str(unseen_data)
+unseen_std <- standardizeData(unseen_data, for_train=FALSE)
 
 ## Model Building
 
@@ -280,45 +113,18 @@ unseen_std_pca <- unseen_std_pca[,1:25]
 
 
 
-saveModelTestMetrics <- function(modelname='', confmat) {
-  print(confmat)  
-}
-
-predictModel <- function(model_name = 'mdl', model, test_data, unseen_data) {
-  test_preds <- predict(model, test_data)
-  saveModelTestMetrics(model_name, confusionMatrix(test_preds, test_data$target, mode = 'everything'))
-  unseen_preds <- predict(model, unseen_data)
-  savePredictions(unseen_preds, name=model_name)
-  table(unseen_preds)
-}
-
-loadModel <- function(model_name='svm_mdl') {
-  
-  rdsFile <- paste(model_name, ".RDS", sep="")
-  print(rdsFile)
-  if (file.exists(rdsFile)) {
-    mdl <- readRDS(rdsFile)
-    return(mdl)
-  } else {
-    return(NULL)
-  }
-}
-
-saveModel <- function(model_name='svm_mdl', model) {
-  saveRDS(object = model, file = paste(model_name, '.RDS', sep=""))
-}
-
 #tried the following
 
 #cost = 100, 500, 1000, 0.1, 0.01, 0.001. Best was with cost=400
-svm_mdl <- loadModel(model_name = 'svm_std_mdl')
-if (is.null(svm_mdl)) {
+mdl <- loadModel(model_name = 'svm_std_mdl')
+if (is.null(mdl)) {
+  library(e1071)
   set.seed(123)
-  svm_mdl <- svm(target ~ ., data = train_std, kernel = 'sigmoid', cost=400)
-  saveModel(model_name = 'svm_std_mdl', svm_mdl)
+  mdl <- svm(target ~ ., data = train_std, kernel = 'sigmoid', cost=400)
+  saveModel(model_name = 'svm_std_mdl', mdl)
 }
-predictModel(model_name = 'svm_std_mdl', svm_mdl, test_std, unseen_std)
-
+predictModel(model_name = 'svm_std_mdl', mdl, test_std, unseen_std)
+#got score of 2%. - this is a weak model
 
 # 
 # 
@@ -363,19 +169,6 @@ predictModel(model_name = 'svm_std_mdl', svm_mdl, test_std, unseen_std)
 # savePredictions(unseen_preds)
 # 
 
-compensateSample <- function(train_std, method='both') {
-  if(!require(ROSE)) {
-    install.packages('ROSE')
-    require(ROSE)
-  }
-  # if(method == 'over') {
-  #   N <- nrow(train_std)
-  # } else {
-  #   N <- nrow(train_std)
-  # }
-  N <- nrow(train_std)
-  return(ovun.sample(target ~ ., data = train_std, method = method, N = N, seed = 1234)$data)
-}
 
 balanced_train_std <- compensateSample(train_std, method='both')
 table(balanced_train_std$target)
@@ -384,6 +177,7 @@ set.seed(123)
 
 mdl <- loadModel(model_name = 'svm_bal_std_mdl')
 if (is.null(mdl)) {
+  require(e1071)
   set.seed(123)
   mdl <- svm(target ~ ., data = balanced_train_std, kernel = 'sigmoid', cost=400)
   saveModel(model_name = 'svm_bal_std_mdl', mdl)
@@ -401,8 +195,10 @@ if (is.null(mdl)) {
   mdl <- train(target~., data = train_std, method='rpart', trControl = trainCtrl, tuneGrid = rpart_grid)
   saveModel(model_name = 'rpart_std_mdl', mdl)
 }
+print(mdl)
 predictModel(model_name = 'rpart_std_mdl', mdl, test_std, unseen_std)
-##This model got F1-stat of 16.5% on Grader
+##This model got F1-stat of 29% on Grader
+
 plot(mdl)
 plot(mdl$finalModel)
 
@@ -416,7 +212,7 @@ if (is.null(mdl)) {
   saveModel(model_name = 'C50_std_mdl', mdl)
 }
 predictModel(model_name = 'C50_std_mdl', mdl, test_std, unseen_std)
-#This model got score of 28% on grader
+#This model got score of 43% on grader
 
 #C5.0 on balanced data
 mdl <- loadModel(model_name = 'C50_bal_std_mdl')
@@ -427,7 +223,7 @@ if (is.null(mdl)) {
   saveModel(model_name = 'C50_bal_std_mdl', mdl)
 }
 predictModel(model_name = 'C50_bal_std_mdl', mdl, test_std, unseen_std)
-#this model got a score of 28%
+#this model got a score of 22%
 
 ##Random Forest
 mdl <- loadModel(model_name = 'random_forest_std_mdl')
@@ -438,7 +234,7 @@ if (is.null(mdl)) {
   saveModel(model_name = 'random_forest_std_mdl', mdl)
 }
 predictModel(model_name = 'random_forest_std_mdl', mdl, test_std, unseen_std)
-#this got a score of 9%
+#this got a score of 10%
 
 
 
@@ -472,7 +268,7 @@ if(is.null(mdl)) {
   saveModel(model_name = 'xgboost_std_mdl', mdl)
 }
 predictModel(model_name = 'xgboost_std_mdl', mdl, test_std, unseen_std)
-#this gave a score of 38.96%
+#this gave a score of 38.96% with center, scale, and knn
 
 
 #what about xgb with oversampled dataset?
@@ -539,4 +335,184 @@ table(ensemble_unseen_preds)
 str(ensemble_unseen_preds)
 savePredictions(ensemble_unseen_preds, name = 'stack_ensemble')
 
+
+
+
+
+
+transformData <- function(orig_data) {
+  TotalAssets <- 10^orig_data$Attr29
+  TotalLiabilities = TotalAssets*orig_data$Attr2
+  Sales = TotalAssets*orig_data$Attr9
+  GrossProfit=Sales*orig_data$Attr19
+  ShortTermLiabilities=GrossProfit/orig_data$Attr12
+  OperationalProfit=Sales*orig_data$Attr42
+  WorkingCapital=orig_data$Attr55
+  Inventory=(Sales*orig_data$Attr20)/365
+  TotalSales=TotalAssets*orig_data$Attr36
+  Equity = TotalAssets*orig_data$Attr10
+  CostOfProductsSold=(Inventory*365)/orig_data$Attr47
+  mod_data <- data.frame(TotalAssets = TotalAssets)
+  mod_data$Sales = Sales
+  mod_data$NetProfit = TotalAssets*orig_data$Attr1
+  mod_data$TotalLiabilities = TotalLiabilities
+  mod_data$RetainedEarnings = TotalAssets*orig_data$Attr6
+  mod_data$EBIT = TotalAssets*orig_data$Attr7
+  mod_data$BookValue = TotalLiabilities*orig_data$Attr8
+  mod_data$Equity = Equity
+  mod_data$WorkingCapital=WorkingCapital
+  mod_data$GrossProfit=GrossProfit
+  mod_data$Depreciation=(TotalLiabilities*orig_data$Attr16)-GrossProfit
+  mod_data$Interest=(TotalAssets*orig_data$Attr14)-GrossProfit
+  mod_data$ShortTermLiabilities=ShortTermLiabilities
+  mod_data$CurrentAssets=ShortTermLiabilities*orig_data$Attr12
+  mod_data$Inventory=Inventory
+  mod_data$OperationalProfit=OperationalProfit
+  mod_data$GrossProfit3Yrs=TotalAssets*orig_data$Attr24
+  mod_data$FinancialExpenses=OperationalProfit/orig_data$Attr27
+  mod_data$FixedAssets=WorkingCapital/orig_data$Attr28
+  mod_data$Cash=TotalLiabilities-(Sales*orig_data$Attr30)
+  mod_data$OperationalExpenses=ShortTermLiabilities*orig_data$Attr33
+  mod_data$ProfitOnSales=TotalAssets*orig_data$Attr35
+  mod_data$TotalSales=TotalSales
+  mod_data$ConstantCapital=TotalAssets*orig_data$Attr38
+  mod_data$Receivables=(Sales*orig_data$Attr44)/365
+  mod_data$CostOfProductsSold=CostOfProductsSold
+  mod_data$TotalCost=TotalSales*orig_data$Attr58
+  mod_data$LongTermLiabilities=Equity*orig_data$Attr59
+  mod_data$CurrentLiabilities=(CostOfProductsSold*orig_data$Attr32)/365
+  mod_data$Attr43=orig_data$Attr43
+  mod_data$ShareCapital=Equity-(TotalAssets*orig_data$Attr25)
+  mod_data$target=orig_data$target
+
+  return(mod_data)
+}
+
+
+setwd('~/datasets/CSE7305c_CUTe')
+new_fin_data <- getPreProcessedData(path = getwd(), 
+                                data_file = 'train.csv', 
+                                target = 'target', sep = ',', 
+                                header = TRUE, 
+                                na_threshold = 0.3, 
+                                zero_threshold = 0.5)
+
+new_fin_data <- transformData(new_fin_data)
+stdlist <- standardizeData(name='xform_fin_data', new_fin_data, target = 'target')
+
+xform_train_std <- data.frame(stdlist[1])
+xform_test_std <- data.frame(stdlist[2])
+
+unseen_data <- read.csv('test.csv', header = TRUE)
+unseen_data <- unseen_data[,colnames(unseen_data) %in% colnames(train_std)]
+unseen_data <- transformData(unseen_data)
+str(unseen_data)
+summary(unseen_data)
+unseen_std <- standardizeData(name='xform_fin_data', unseen_data, for_train=FALSE)
+
+
+mdl <- loadModel(model_name = 'xgboost_bal_mod_std_mdl2')
+if(is.null(mdl)) {
+  set.seed(123)
+  #balanced_train_std <- compensateSample(train_std, method='both')
+  sampling_strategy<-trainControl(method = "repeatedcv",number = 2,repeats = 2,verboseIter = T,allowParallel = T)
+  param_grid <- expand.grid(.nrounds = 250, .max_depth = c(2:6), .eta = c(0.1,0.11,0.09),
+                            .gamma = c(0.6, 0.3), .colsample_bytree = c(0.6),
+                            .min_child_weight = 1, .subsample = c(0.5, 0.6))
+  
+  mdl <- train(x = train_std[ , !(names(train_std) %in% c("target"))], 
+               y = train_std$target, 
+               method = "xgbTree",
+               trControl = sampling_strategy,
+               tuneGrid = param_grid)
+  saveModel(model_name = 'xgboost_bal_mod_std_mdl2', mdl)
+}
+predictModel(model_name = 'xgboost_bal_mod_std_mdl2', mdl, test_std, unseen_std)
+
+library(factoextra)
+library(cluster)
+library(NbClust)
+
+#clustering
+k <- 3 # Change k and observe the difference
+
+km_clust <- kmeans(xform_train_std[,!colnames(xform_train_std) %in% 'target'], centers = k, iter.max = 10000)
+# Visualize k-means clusters
+fviz_cluster(km_clust, data = xform_train_std[,!colnames(xform_train_std) %in% 'target'], geom = "point",
+             stand = FALSE) + theme_bw()
+
+sum(is.na(xform_train_std))
+
+km_clust$centers
+
+new_data_std <- standardizeData(name='new_fin_data', new_fin_data, for_train = FALSE)
+km_clust <- kmeans(new_data_std[,!colnames(new_data_std) %in% 'target'], centers = 2, iter.max = 10000)
+# Visualize k-means clusters
+fviz_cluster(km_clust, data = new_data_std[,!colnames(new_data_std) %in% 'target'], geom = "point",
+             stand = FALSE) + theme_bw()
+View(new_data_std[km_clust$cluster==2,])
+rownames(new_data_std[km_clust$cluster==2,])
+
+new_data_std <- new_data_std[!rownames(new_data_std) %in% rownames(new_data_std[km_clust$cluster==2,]),]
+nrow(new_data_std)
+#running kmeans again
+km_clust <- kmeans(new_data_std[,!colnames(new_data_std) %in% 'target'], centers = 2, iter.max = 10000)
+# Visualize k-means clusters
+fviz_cluster(km_clust, data = new_data_std[,!colnames(new_data_std) %in% 'target'], geom = "point",
+             stand = FALSE) + theme_bw()
+
+
+new_data_std <- read.csv('new_fin_data_std.csv')
+View(new_data_std[km_clust$cluster==1,])
+new_data_std <- new_data_std[!rownames(new_data_std) %in% rownames(new_data_std[km_clust$cluster==1,]),]
+nrow(new_data_std)
+#running kmeans again
+km_clust <- kmeans(new_data_std[,!colnames(new_data_std) %in% 'target'], centers = 2, iter.max = 10000)
+# Visualize k-means clusters
+fviz_cluster(km_clust, data = new_data_std[,!colnames(new_data_std) %in% 'target'], geom = "point",
+             stand = FALSE) + theme_bw()
+
+View(new_data_std[km_clust$cluster==2,])
+new_data_std <- new_data_std[!rownames(new_data_std) %in% rownames(new_data_std[km_clust$cluster==2,]),]
+nrow(new_data_std)
+#running kmeans again
+km_clust <- kmeans(new_data_std[,!colnames(new_data_std) %in% 'target'], centers = 2, iter.max = 10000)
+# Visualize k-means clusters
+fviz_cluster(km_clust, data = new_data_std[,!colnames(new_data_std) %in% 'target'], geom = "point",
+             stand = FALSE) + theme_bw()
+
+outliers <- setdiff(rownames(new_fin_data), rownames(new_data_std))
+
+#let's see if this makes any difference
+new_fin_data<- new_fin_data[!rownames(new_fin_data) %in% outliers, ]
+stdlist <- standardizeData(name='xform_fin_data', new_fin_data, target = 'target')
+
+xform_train_std <- data.frame(stdlist[1])
+xform_test_std <- data.frame(stdlist[2])
+
+unseen_data <- read.csv('test.csv', header = TRUE)
+unseen_data <- transformData(unseen_data)
+unseen_data <- unseen_data[,colnames(unseen_data) %in% colnames(xform_train_std)]
+str(unseen_data)
+summary(unseen_data)
+unseen_std <- standardizeData(name='xform_fin_data', unseen_data, for_train=FALSE)
+summary(unseen_std)
+
+mdl <- loadModel(model_name = 'xgboost_bal_mod_std_mdl3')
+if(is.null(mdl)) {
+  set.seed(123)
+  #balanced_train_std <- compensateSample(train_std, method='both')
+  sampling_strategy<-trainControl(method = "repeatedcv",number = 2,repeats = 2,verboseIter = T,allowParallel = T)
+  param_grid <- expand.grid(.nrounds = 250, .max_depth = c(2:6), .eta = c(0.1,0.11,0.09),
+                            .gamma = c(0.6, 0.3), .colsample_bytree = c(0.6),
+                            .min_child_weight = 1, .subsample = c(0.5, 0.6))
+  
+  mdl <- train(x = xform_train_std[ , !(names(xform_train_std) %in% c("target"))], 
+               y = xform_train_std$target, 
+               method = "xgbTree",
+               trControl = sampling_strategy,
+               tuneGrid = param_grid)
+  saveModel(model_name = 'xgboost_bal_mod_std_mdl3', mdl)
+}
+predictModel(model_name = 'xgboost_bal_mod_std_mdl3', mdl, xform_test_std, unseen_std)
 
